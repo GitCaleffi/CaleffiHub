@@ -1,0 +1,54 @@
+<table style="width: 100%; max-width: 660px; margin-left: auto; margin-right:auto;font-family: 'Rubik', sans-serif;">
+    <%- await include('header'); -%>
+        <tr>
+            <td>
+                <table style="width: 100%; font-family: 'Rubik', sans-serif;">
+                    <tr>
+                        <td style="padding: 20px 24px 60px 24px; font-family: 'Rubik', sans-serif;">
+                            <table>
+                                <tr>
+                                    <td style="font-family: 'Rubik', sans-serif;">Hi,</td>
+                                </tr>
+                                <tr>
+                                    <td style="font-family: 'Rubik', sans-serif;">Greetings!<br /><br /></td>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="font-family: 'Rubik', sans-serif;">You are just a step away from accessing your
+                            CaleffiHub account.</td>
+                    </tr>
+                    <tr>
+                        <td style="font-family: 'Rubik', sans-serif;">We are sharing a verification link to access your
+                            account.<br />
+                            Once you have verified the link, you'll be prompted to login immediately. This
+                            is to ensure that only you have access to your account.<br /><br />
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="font-family: 'Rubik', sans-serif;">Your Link:
+                            <a href="<%= link %>" 
+                                style="color: #4D7CFE; font-family: 'Rubik', sans-serif; letter-spacing:2px; text-decoration: none;" 
+                                target="_blank">
+                                 Click here to verify your account
+                             </a>
+                            <br /><br />
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="font-family: 'Rubik', sans-serif;">Expires in: 10 minute<br /><br /></td>
+                    </tr>
+                    <tr>
+                        <td style="font-family: 'Rubik', sans-serif;">
+                            Best Regards,<br />
+                            Team CaleffiHub
+                        </td>
+                    </tr>
+                </table>
+            </td>
+
+        </tr>
+        <%- await include('footer'); -%>
+</table>
+</td>
+</tr>
+</table>

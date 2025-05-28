@@ -1,0 +1,40 @@
+{
+  "AUTHORIZATION": "authorization",
+  "JWT_SECRET_KEY": "d2h4b2h59fb32b54jnfnsh",
+  "SALT": 10,
+  "BASE_PATH": "/api/v1/",
+  "MONGO_CRED": {
+    "MONGO_USER": "",
+    "MONGO_PASSWORD": "",
+    "MONGO_PATH": "mongodb://127.0.0.1:27017"
+  },
+  "SENDGRID_SETTING": {
+    "API_KEY": "",
+    "NO_REPLY": {
+      "NAME": "",
+      "EMAIL": ""
+    },
+    "SENDER": {
+      "NAME": "",
+      "EMAIL": ""
+    },
+    "INFO": {
+      "NAME": "",
+      "EMAIL": ""
+    }
+  },
+  "SMTP_SETTING": {
+    "SENDER_NAME": "",
+    "SENDER": "",
+    "HOST": "smtp.gmail.com",
+    "PORT": 587,
+    "USERNAME": "",
+    "PASSWORD": ""
+  },
+  "AZURE_STORAGE": {
+    "ACCOUNT_NAME": "",
+    "ACCOUNT_KEY": "",
+    "CONTAINER_NAME": "test-container"
+  }
+ 
+}
