@@ -13,10 +13,11 @@ import { MESSAGES } from "./messages";
 import { AssignmentStatus, OrdersAssignment } from "../db/OrderAssignment";
 import pLimit from 'p-limit';
 import { In, LessThan } from "typeorm";
+import { DeltaInventory } from "../db/DeltaInventory";
 const limitConcurrency = pLimit(5); // Limit to 5 concurrent requests to respect rate limits
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const LOCATION_ID= process.env.LOCATION_ID
+const LOCATION_ID = process.env.LOCATION_ID
 const BASE_URL = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-10`;
 
 export class CronUtilities {
@@ -64,15 +65,15 @@ export class CronUtilities {
   public static getTopInventoryWithMaxMargin = (inventoryList: any[], orderUserId: string) => {
     // Filter out inventory with same customerId as the order user
     const filtered = inventoryList.filter(inv => inv.customerId !== orderUserId);
-  
+
     // If nothing left after filtering, return null or do nothing
     if (filtered.length === 0) return null;
-  
+
     // Find inventory with the maximum margin
     const topInventory = filtered.reduce((prev, curr) => {
       return (curr.margin > prev.margin) ? curr : prev;
     });
-  
+
     return topInventory;
   };
 
@@ -119,10 +120,12 @@ export class CronUtilities {
     }
   }
 
+  // Runs every 15 minutes to upload Delta Inventory
   public static async uploadDeltaInventory() {
     try {
       console.log(">>>> cron job is running :uploadDeltaInventory >>>")
       const inventoryRepository = AppDataSource.getRepository(Inventory);
+      const deltaInventoryRepository = AppDataSource.getRepository(DeltaInventory);
 
       const aggregatedInventory = await inventoryRepository
         .createQueryBuilder("inventory")
@@ -130,44 +133,57 @@ export class CronUtilities {
         .addSelect("SUM(inventory.totalQuantity)", "totalQuantity")
         .groupBy("inventory.sku")
         .getRawMany();
-  
-      if (!aggregatedInventory.length) {
-        return CommonUtilities.sendResponsData({
-          code: 200,
-          message: 'No inventory to update',
-          data: {},
-        });
-      }
-  
-      const now = new Date();
-      const getFormattedDate = now.toLocaleDateString("it-IT").replace(/\//g, "/").slice(0, 8);
-  
-      const stocks = aggregatedInventory.map(item => ({
-        "Cod_Art": item.sku,
-        "Cod_Mag": "R1",
-        "Quant_Disponibile": item.totalQuantity,
-        "Stock_out_of_Stock": "N",
-        "Art_Attivo": "N",
-        "Quant_Previsione": "000000000",
-        "Ord_Status": "",
-        "Data_Ultima_Elabor": getFormattedDate,
-        "Ora_Ultima_Elabor": getFormattedDate
-      }));
-  
-      const response = await axios.post(`https://webhooks.getmesa.com/v1/caleffispa/trigger-webhook/665812c988cacd331602e39e/665812dc1f76a7af030dc2e6.json?apikey=${process.env.SHOPIFY_API_KEY}`, {
-        stocks
-      }, {
-        headers: {
-          'Content-Type': 'application/json'
+
+      if (!aggregatedInventory.length) return
+
+      let calculatedDeltaArr = [];
+      for (const item of aggregatedInventory) {
+        const sku = parseInt(item.sku, 10); // Because the original value is a string
+        const totalQuantity = parseInt(item.totalQuantity, 10);
+
+        const existingDelta = await deltaInventoryRepository.findOne({ where: { sku } });
+
+        if (!existingDelta) {
+          const newDelta = await deltaInventoryRepository.create({ sku, totalQuantity });
+          await deltaInventoryRepository.save(newDelta);
+          calculatedDeltaArr.push(newDelta);
         }
-      });
-  
-      console.log("Inventory updated successfully using cron job");
-      // return CommonUtilities.sendResponsData({
-      //   code: 200,
-      //   message: MESSAGES.SUCCESS,
-      //   data: response?.data,
-      // });
+        else if (existingDelta.totalQuantity !== totalQuantity) {
+          existingDelta.totalQuantity = totalQuantity;
+          await deltaInventoryRepository.save(existingDelta);
+          calculatedDeltaArr.push(existingDelta);
+        }
+      }
+
+      if (calculatedDeltaArr?.length > 0) {
+        console.log('calculatedDeltaArr >>>> ', calculatedDeltaArr);
+
+        const now = new Date();
+        const getFormattedDate = now.toLocaleDateString("it-IT").replace(/\//g, "/").slice(0, 8);
+
+        const stocks = calculatedDeltaArr.map(item => ({
+          "Cod_Art": item.sku,
+          "Cod_Mag": "R1",
+          "Quant_Disponibile": item.totalQuantity.toString(),
+          "Stock_out_of_Stock": "N",
+          "Art_Attivo": "N",
+          "Quant_Previsione": "000000000",
+          "Ord_Status": "",
+          "Data_Ultima_Elabor": getFormattedDate,
+          "Ora_Ultima_Elabor": getFormattedDate
+        }));
+
+        const response = await axios.post(`https://webhooks.getmesa.com/v1/caleffispa/trigger-webhook/665812c988cacd331602e39e/665812dc1f76a7af030dc2e6.json?apikey=${process.env.SHOPIFY_API_KEY}`, {
+          stocks
+        }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        console.log("Inventory updated successfully using cron job");
+      }
+      return
     } catch (error) {
       console.error("Error uploading inventory:", error);
     }
@@ -176,27 +192,27 @@ export class CronUtilities {
   public static async assignOrderToLocation() {
     try {
       console.log(">>>> cron job is running :assignOrderToLocation >>>");
-  
+
       const userRepository = AppDataSource.getRepository(User);
       const inventoryRepository = AppDataSource.getRepository(Inventory);
       const assignmentRepo = AppDataSource.getRepository(OrdersAssignment);
       const notificationRepository = AppDataSource.getRepository(Notification);
       const users = await userRepository.find();
-  
+
       for (const user of users) {
         const inventoryList = await inventoryRepository.find({
           where: { user: { id: user.id } },
           relations: ["user"],
           order: { updatedAt: "DESC" },
         });
-  
+
         if (!inventoryList.length) continue;
-  
+
         const matchedOrders: any[] = [];
-  
+
         for (const item of inventoryList) {
-          const { prezzoVendita, costoArticoli, sku }:any = item;
-  
+          const { prezzoVendita, costoArticoli, sku }: any = item;
+
           const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/orders.json?sku=${sku}`;
           const response = await axios.get(url, {
             headers: {
@@ -205,11 +221,11 @@ export class CronUtilities {
             },
             timeout: 10000,
           });
-  
+
           const orders = response.data.orders || [];
           let temp: any[] = [];
           let marginCount = 0;
-  
+
           for (const order of orders) {
             const matchingItem = order.line_items?.find((lineItem: any) => parseInt(lineItem.sku) == parseInt(sku));
             if (matchingItem) {
@@ -238,17 +254,17 @@ export class CronUtilities {
             });
           }
         }
-  
+
         if (!matchedOrders.length) continue;
-  
+
         const topOrder = matchedOrders.reduce((maxItem, currentItem) => {
           return currentItem.margin > maxItem.margin ? currentItem : maxItem;
         }, matchedOrders[0]);
-  
+
         let url = `${BASE_URL}/orders.json?fulfillment_status=unfulfilled`;
         let orders: any[] = [];
         let nextUrl = url;
-  
+
         while (nextUrl) {
           const response = await axios.get(nextUrl, {
             headers: {
@@ -257,16 +273,16 @@ export class CronUtilities {
             },
             timeout: 30000,
           });
-  
+
           orders = [...orders, ...response.data.orders || []];
-  
+
           const linkHeader = response.headers.link;
           const matches = linkHeader?.match(/<([^>]+)>;\s*rel="next"/);
           nextUrl = matches?.[1] || null;
-  
+
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
-  
+
         const enrichedOrders = await Promise.all(
           orders.map((order) =>
             limitConcurrency(async () => {
@@ -278,10 +294,10 @@ export class CronUtilities {
                   },
                   timeout: 30000,
                 });
-  
+
                 const fulfillmentOrders = fulfillmentResponse.data.fulfillment_orders || [];
                 const openFulfillmentOrders = fulfillmentOrders.filter((fo: any) => fo.status === 'open');
-  
+
                 if (openFulfillmentOrders.length > 0) {
                   return {
                     ...order,
@@ -289,7 +305,7 @@ export class CronUtilities {
                     fulfillment_orders: openFulfillmentOrders,
                   };
                 }
-  
+
                 return order;
               } catch (error: any) {
                 console.error(`Error fetching fulfillment for order ${order.id}:`, error.response?.data || error.message);
@@ -298,30 +314,30 @@ export class CronUtilities {
             })
           )
         );
-  
+
         const filteredOrders = enrichedOrders.filter((order) =>
           order.fulfillment_orders?.some((fo: any) => fo.assigned_location_id === 106579198277)
         );
-  
+
         for (const item of filteredOrders) {
           const { id, total_price, customer, name, order_number } = item;
-  
+
           let address = "";
           if (customer?.default_address) {
-            address += customer.default_address.address1+" " || "";
-            address += customer.default_address.city+" " || "";
-            address += customer.default_address.zip+" " || "";
-            address += customer.default_address.province+" " || "";
+            address += customer.default_address.address1 + " " || "";
+            address += customer.default_address.city + " " || "";
+            address += customer.default_address.zip + " " || "";
+            address += customer.default_address.province + " " || "";
             address += customer.default_address.country || "";
           }
-  
+
           const existingAssignment = await assignmentRepo.findOneBy({ orderId: id });
-  
+
           if (existingAssignment) {
             console.log(`Skipped existing orderId: ${id}`);
             continue;
           }
-  
+
           const assignment = assignmentRepo.create({
             orderId: id,
             status: AssignmentStatus.PENDING,
@@ -335,7 +351,7 @@ export class CronUtilities {
             orderName: name,
             billingAddress: address,
           });
-  
+
           await assignmentRepo.save(assignment);
 
           let notificationMessage = `Order #${order_number} (${name}) has been successfully assigned to you.`;
@@ -351,109 +367,109 @@ export class CronUtilities {
           console.log(`Inserted orderId: ${id}`);
         }
       }
-  
+
       console.log("Order assignment job completed.");
     } catch (error) {
       console.error("Error assigning order to User:", error);
     }
   }
 
-  public static async reassignmentOrders(){
-   try {
-    console.log(">>>> cron job is running :reassignmentOrders >>>")
+  public static async reassignmentOrders() {
+    try {
+      console.log(">>>> cron job is running :reassignmentOrders >>>")
 
-    const userRepository = AppDataSource.getRepository(User);
-    const inventoryRepository = AppDataSource.getRepository(Inventory);
-    const notificationRepository = AppDataSource.getRepository(Notification);
-    const inventoryList = await inventoryRepository.find({
-      relations: ["user"],
-      order: { updatedAt: "DESC" },
-    });
-
-    const matchedOrders: any[] = [];
-
-    for (const item of inventoryList) {
-      const { prezzoVendita, costoArticoli, sku, user}:any = item;
-
-      // console.log(item, ">>>> item ")
-
-      const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/orders.json?sku=${sku}`;
-      const response = await axios.get(url, {
-        headers: {
-          "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-        timeout: 10000,
+      const userRepository = AppDataSource.getRepository(User);
+      const inventoryRepository = AppDataSource.getRepository(Inventory);
+      const notificationRepository = AppDataSource.getRepository(Notification);
+      const inventoryList = await inventoryRepository.find({
+        relations: ["user"],
+        order: { updatedAt: "DESC" },
       });
 
-      const orders = response.data.orders || [];
-      let temp: any[] = [];
-      let marginCount = 0;
+      const matchedOrders: any[] = [];
 
-      for (const order of orders) {
-        const matchingItem = order.line_items?.find((lineItem: any) => parseInt(lineItem.sku) == parseInt(sku));
-        if (matchingItem) {
-          const totalAmount = parseFloat(order.total_price || '0');
-          const margin = totalAmount - parseFloat(prezzoVendita || '0');
-          marginCount += margin;
-          temp.push({
+      for (const item of inventoryList) {
+        const { prezzoVendita, costoArticoli, sku, user }: any = item;
+
+        // console.log(item, ">>>> item ")
+
+        const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/orders.json?sku=${sku}`;
+        const response = await axios.get(url, {
+          headers: {
+            "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+            "Content-Type": "application/json",
+          },
+          timeout: 10000,
+        });
+
+        const orders = response.data.orders || [];
+        let temp: any[] = [];
+        let marginCount = 0;
+
+        for (const order of orders) {
+          const matchingItem = order.line_items?.find((lineItem: any) => parseInt(lineItem.sku) == parseInt(sku));
+          if (matchingItem) {
+            const totalAmount = parseFloat(order.total_price || '0');
+            const margin = totalAmount - parseFloat(prezzoVendita || '0');
+            marginCount += margin;
+            temp.push({
+              sku,
+              total_amount: totalAmount,
+              margin,
+              order_id: order.id,
+              customerId: user.customerId,
+              order_name: order.name,
+              customer_email: order.email,
+              created_at: order.created_at,
+            });
+          }
+        }
+        if (temp.length > 0) {
+          matchedOrders.push({
             sku,
-            total_amount: totalAmount,
-            margin,
-            order_id: order.id,
+            orders: temp,
+            id: user.id,
             customerId: user.customerId,
-            order_name: order.name,
-            customer_email: order.email,
-            created_at: order.created_at,
+            margin: marginCount,
+            prezzo_vendita: prezzoVendita,
+            costoArticoli: costoArticoli,
           });
         }
       }
-      if (temp.length > 0) {
-        matchedOrders.push({
-          sku,
-          orders: temp,
-          id: user.id,
-          customerId: user.customerId,
-          margin: marginCount,
-          prezzo_vendita: prezzoVendita,
-          costoArticoli: costoArticoli,
-        });
+
+      const assignmentRepository = AppDataSource.getRepository(OrdersAssignment);
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+      const [assignmentList, total] = await assignmentRepository.findAndCount({
+        where: { status: In([AssignmentStatus.PENDING, AssignmentStatus.REJECTED]), createdAt: LessThan(twelveHoursAgo) }
+      });
+
+      if (assignmentList && assignmentList.length > 0) {
+        assignmentList.forEach(async (item: any) => {
+          let orderWithMaxMargin = this.getTopInventoryWithMaxMargin(matchedOrders, item.user);
+          if (orderWithMaxMargin) {
+            let assignment: any = await assignmentRepository.findOneBy({ id: Number(item.id) });
+            assignment.status = AssignmentStatus.PENDING;
+            assignment.createdAt = new Date();
+            assignment.updatedAt = new Date();
+            assignment.user = orderWithMaxMargin.customerId
+            await assignmentRepository.save(assignment);
+
+            let notificationMessage = `Order #${item.orderNumber} (${item.orderName}) has been successfully assigned to you.`;
+
+            io.emit('orderAssigned', { message: notificationMessage, userId: orderWithMaxMargin.id });
+
+            const notification = notificationRepository.create({
+              user: { id: orderWithMaxMargin.id },
+              message: notificationMessage,
+            });
+            await notificationRepository.save(notification);
+
+          }
+        })
       }
     }
-
-    const assignmentRepository = AppDataSource.getRepository(OrdersAssignment);
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000); 
-    const [assignmentList, total] = await assignmentRepository.findAndCount({
-      where: { status: In([AssignmentStatus.PENDING, AssignmentStatus.REJECTED]), createdAt: LessThan(twelveHoursAgo) }
-    });
-
-    if(assignmentList && assignmentList.length > 0){
-      assignmentList.forEach(async(item:any) => {
-      let orderWithMaxMargin = this.getTopInventoryWithMaxMargin(matchedOrders, item.user);
-      if(orderWithMaxMargin) {
-        let assignment:any = await assignmentRepository.findOneBy({ id: Number(item.id) });
-        assignment.status =  AssignmentStatus.PENDING;
-        assignment.createdAt = new Date();
-        assignment.updatedAt = new Date();
-        assignment.user = orderWithMaxMargin.customerId
-        await assignmentRepository.save(assignment);
-
-        let notificationMessage = `Order #${item.orderNumber} (${item.orderName}) has been successfully assigned to you.`;
-
-        io.emit('orderAssigned', { message: notificationMessage, userId: orderWithMaxMargin.id });
-
-        const notification = notificationRepository.create({
-          user: { id: orderWithMaxMargin.id },
-          message: notificationMessage,
-        });
-        await notificationRepository.save(notification);
-
-        }
-      })
+    catch (error) {
+      console.error("Error Re-assigning order to User:", error);
     }
-   } 
-   catch(error) {
-    console.error("Error Re-assigning order to User:", error);
-   } 
   }
 }
