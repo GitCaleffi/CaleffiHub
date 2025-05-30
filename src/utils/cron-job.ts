@@ -21,23 +21,23 @@ crone.schedule('0 */6 * * *', async () => {
 
 
 // Runs every 15 minutes
-crone.schedule("*/15 * * * *", () => {
+crone.schedule("*/15 * * * *", async () => {
     try {
-    CronUtilities.uploadDeltaInventory();
+        await CronUtilities.uploadDeltaInventory();
     } catch (error) {
         console.error('Error Cron Job method:uploadDeltaInventory', error);
-    }  
+    }
 });
 
 // Runs every 10 minutes
 // Cron job to find new order from shopify and assign it to retailer with max margin amount orders 
-crone.schedule("*/10 * * * *", () => {
+crone.schedule("*/20 * * * *", async () => {
     try {
-    CronUtilities.assignOrderToLocation();
-    CronUtilities.reassignmentOrders();
+        await CronUtilities.assignOrderToLocation();
+        await CronUtilities.reassignmentOrders();
     } catch (error) {
         console.error('Error Cron Job method:assignOrderToLocations & method:reassignmentOrders', error);
-    }  
+    }
 });
 
 

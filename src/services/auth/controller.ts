@@ -46,6 +46,7 @@ export const register = async (bodyData: any, res: Response, next: NextFunction)
     // userObj.deviceId = deviceId;
     userObj.otp = randomOTP;
     userObj.companyName = bodyData.companyName;
+    userObj.vat = bodyData.vat;
     userObj.street = bodyData.street;
     userObj.houseNumber = bodyData.houseNumber;
     userObj.zipCode = bodyData.zipCode;

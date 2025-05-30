@@ -178,11 +178,11 @@ export const updateShopifyOrderStatus = async (
       );
     }
 
-    if (![AssignmentStatus.ACCEPTED, AssignmentStatus.REJECTED, AssignmentStatus.SHIPPED].includes(newStatus)) {
+    if (![AssignmentStatus.ACCEPTED, AssignmentStatus.REJECTED, AssignmentStatus.SHIPPED, AssignmentStatus.PREPARED].includes(newStatus)) {
       return res.status(400).json(
         CommonUtilities.sendResponsData({
           code: 400,
-          message: "Invalid status value. Must be 'accepted' or 'rejected' or 'shipped'.",
+          message: "Invalid status value. Must be 'accepted' or 'rejected' or 'shipped' or 'prepared'.",
         })
       );
     }
@@ -190,7 +190,7 @@ export const updateShopifyOrderStatus = async (
     assignment.status = newStatus as AssignmentStatus;
     await assignmentRepository.save(assignment);
 
-    if (newStatus == AssignmentStatus.ACCEPTED || newStatus == AssignmentStatus.SHIPPED) {
+    if (newStatus == AssignmentStatus.ACCEPTED || newStatus == AssignmentStatus.SHIPPED || newStatus == AssignmentStatus.PREPARED) {
       let nextUrl = `${BASE_URL}/orders/${assignment.orderId}.json`
       let response: any = await axios.get(nextUrl, {
         headers: {
@@ -212,18 +212,21 @@ export const updateShopifyOrderStatus = async (
           return total + (itemPrice - totalDiscount);
         }, 0);
       }
-      
+
       let obj = {
         status: assignment.status,
         province: user?.provinceCode || "",
         city: user?.city || "",
-        addr: user?.shopAddress,
+        addr: user?.shopAddress || "",
         email: user?.email,
         phone: user?.phone,
-        country_code: user?.country,
+        country_code: user?.country || "",
         order_id: response?.data?.order?.id,
-        cap: user?.zipCode,
-        COD: COD
+        cap: user?.zipCode || "",
+        COD: COD,
+        ragione_sociale: user?.companyName || "",
+        customer_code: user?.customerId,
+        VAT: user?.vat || "",
       };
 
       console.log(obj, ">>> obj")
@@ -445,7 +448,8 @@ export const assignOrderToLocation = async (token: any, req: any, res: Response,
         phone: customer.phone ? customer.phone : "",
         orderNumber: order_number,
         orderName: name,
-        billingAddress: address
+        billingAddress: address,
+        sku: topOrder.sku
       });
 
       await assignmentRepo.save(assignment);

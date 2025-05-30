@@ -136,7 +136,7 @@ export class CronUtilities {
 
       if (!aggregatedInventory.length) return
 
-      let calculatedDeltaArr = [];
+      let calculatedDeltaArr: any = [];
       for (const item of aggregatedInventory) {
         const sku = parseInt(item.sku, 10); // Because the original value is a string
         const totalQuantity = parseInt(item.totalQuantity, 10);
@@ -161,7 +161,7 @@ export class CronUtilities {
         const now = new Date();
         const getFormattedDate = now.toLocaleDateString("it-IT").replace(/\//g, "/").slice(0, 8);
 
-        const stocks = calculatedDeltaArr.map(item => ({
+        const stocks = calculatedDeltaArr.map((item: any) => ({
           "Cod_Art": item.sku,
           "Cod_Mag": "R1",
           "Quant_Disponibile": item.totalQuantity.toString(),
@@ -199,68 +199,7 @@ export class CronUtilities {
       const notificationRepository = AppDataSource.getRepository(Notification);
       const users = await userRepository.find();
 
-      for (const user of users) {
-        const inventoryList = await inventoryRepository.find({
-          where: { user: { id: user.id } },
-          relations: ["user"],
-          order: { updatedAt: "DESC" },
-        });
-
-        if (!inventoryList.length) continue;
-
-        const matchedOrders: any[] = [];
-
-        for (const item of inventoryList) {
-          const { prezzoVendita, costoArticoli, sku }: any = item;
-
-          const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/orders.json?sku=${sku}`;
-          const response = await axios.get(url, {
-            headers: {
-              "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-              "Content-Type": "application/json",
-            },
-            timeout: 10000,
-          });
-
-          const orders = response.data.orders || [];
-          let temp: any[] = [];
-          let marginCount = 0;
-
-          for (const order of orders) {
-            const matchingItem = order.line_items?.find((lineItem: any) => parseInt(lineItem.sku) == parseInt(sku));
-            if (matchingItem) {
-              const totalAmount = parseFloat(order.total_price || '0');
-              const margin = totalAmount - parseFloat(prezzoVendita || '0');
-              marginCount += margin;
-              temp.push({
-                sku,
-                total_amount: totalAmount,
-                margin,
-                order_id: order.id,
-                order_name: order.name,
-                customer_email: order.email,
-                created_at: order.created_at,
-              });
-            }
-          }
-          if (temp.length > 0) {
-            matchedOrders.push({
-              sku,
-              orders: temp,
-              customerId: user.customerId,
-              margin: marginCount,
-              prezzo_vendita: prezzoVendita,
-              costoArticoli: costoArticoli,
-            });
-          }
-        }
-
-        if (!matchedOrders.length) continue;
-
-        const topOrder = matchedOrders.reduce((maxItem, currentItem) => {
-          return currentItem.margin > maxItem.margin ? currentItem : maxItem;
-        }, matchedOrders[0]);
-
+      if (users?.length > 0) {
         let url = `${BASE_URL}/orders.json?fulfillment_status=unfulfilled`;
         let orders: any[] = [];
         let nextUrl = url;
@@ -283,92 +222,162 @@ export class CronUtilities {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
-        const enrichedOrders = await Promise.all(
-          orders.map((order) =>
-            limitConcurrency(async () => {
-              try {
-                const fulfillmentResponse = await axios.get(`${BASE_URL}/orders/${order.id}/fulfillment_orders.json`, {
-                  headers: {
-                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                    'Content-Type': 'application/json',
-                  },
-                  timeout: 30000,
+        for (const user of users) {
+          const inventoryList = await inventoryRepository.find({
+            where: { user: { id: user.id } },
+            relations: ["user"],
+            order: { updatedAt: "DESC" },
+          });
+
+          if (!inventoryList.length) continue;
+
+          const matchedOrders: any[] = [];
+
+          for (const item of inventoryList) {
+            const { prezzoVendita, costoArticoli, sku }: any = item;
+
+            const url = `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/orders.json?sku=${sku}`;
+            const response = await axios.get(url, {
+              headers: {
+                "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+                "Content-Type": "application/json",
+              },
+              timeout: 10000,
+            });
+
+            const orders = response.data.orders || [];
+            let temp: any[] = [];
+            let marginCount = 0;
+
+            for (const order of orders) {
+              const matchingItem = order.line_items?.find((lineItem: any) => parseInt(lineItem.sku) == parseInt(sku));
+              if (matchingItem) {
+                const totalAmount = parseFloat(order.total_price || '0');
+                const margin = totalAmount - parseFloat(prezzoVendita || '0');
+                marginCount += margin;
+                temp.push({
+                  sku,
+                  total_amount: totalAmount,
+                  margin,
+                  order_id: order.id,
+                  order_name: order.name,
+                  customer_email: order.email,
+                  created_at: order.created_at,
                 });
-
-                const fulfillmentOrders = fulfillmentResponse.data.fulfillment_orders || [];
-                const openFulfillmentOrders = fulfillmentOrders.filter((fo: any) => fo.status === 'open');
-
-                if (openFulfillmentOrders.length > 0) {
-                  return {
-                    ...order,
-                    location_id: openFulfillmentOrders[0].assigned_location_id,
-                    fulfillment_orders: openFulfillmentOrders,
-                  };
-                }
-
-                return order;
-              } catch (error: any) {
-                console.error(`Error fetching fulfillment for order ${order.id}:`, error.response?.data || error.message);
-                return order;
               }
+            }
+            if (temp.length > 0) {
+              matchedOrders.push({
+                sku,
+                orders: temp,
+                customerId: user.customerId,
+                margin: marginCount,
+                prezzo_vendita: prezzoVendita,
+                costoArticoli: costoArticoli,
+              });
+            }
+          }
+
+          if (!matchedOrders.length) continue;
+
+          const topOrder = matchedOrders.reduce((maxItem, currentItem) => {
+            return currentItem.margin > maxItem.margin ? currentItem : maxItem;
+          }, matchedOrders[0]);
+
+
+          const enrichedOrders = await Promise.all(
+            orders.map((order) =>
+              limitConcurrency(async () => {
+                try {
+                  const fulfillmentResponse = await axios.get(`${BASE_URL}/orders/${order.id}/fulfillment_orders.json`, {
+                    headers: {
+                      'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                      'Content-Type': 'application/json',
+                    },
+                    timeout: 30000,
+                  });
+
+                  const fulfillmentOrders = fulfillmentResponse.data.fulfillment_orders || [];
+                  const openFulfillmentOrders = fulfillmentOrders.filter((fo: any) => fo.status === 'open');
+
+                  if (openFulfillmentOrders.length > 0) {
+                    return {
+                      ...order,
+                      location_id: openFulfillmentOrders[0].assigned_location_id,
+                      fulfillment_orders: openFulfillmentOrders,
+                    };
+                  }
+
+                  return order;
+                } catch (error: any) {
+                  console.error(`Error fetching fulfillment for order ${order.id}:`, error.response?.data || error.message);
+                  return order;
+                }
+              })
+            )
+          );
+          
+          const locationId = Number(process.env.LOCATION_ID);
+
+          const filteredOrders = enrichedOrders.filter((order) =>
+            order.fulfillment_orders?.some((fo: any) => {
+              return fo.assigned_location_id === locationId
             })
-          )
-        );
+          );
 
-        const filteredOrders = enrichedOrders.filter((order) =>
-          order.fulfillment_orders?.some((fo: any) => fo.assigned_location_id === 106579198277)
-        );
+          for (const item of filteredOrders) {
+            const { id, total_price, customer, name, order_number } = item;
 
-        for (const item of filteredOrders) {
-          const { id, total_price, customer, name, order_number } = item;
+            let address = "";
+            if (customer?.default_address) {
+              address += customer.default_address.address1 + " " || "";
+              address += customer.default_address.city + " " || "";
+              address += customer.default_address.zip + " " || "";
+              address += customer.default_address.province + " " || "";
+              address += customer.default_address.country || "";
+            }
 
-          let address = "";
-          if (customer?.default_address) {
-            address += customer.default_address.address1 + " " || "";
-            address += customer.default_address.city + " " || "";
-            address += customer.default_address.zip + " " || "";
-            address += customer.default_address.province + " " || "";
-            address += customer.default_address.country || "";
+            const existingAssignment = await assignmentRepo.findOneBy({ orderId: id });
+
+            if (existingAssignment) {
+              console.log(`Skipped existing orderId: ${id}`);
+              continue;
+            }
+
+            const assignment = assignmentRepo.create({
+              orderId: id,
+              status: AssignmentStatus.PENDING,
+              user: topOrder.customerId.toString(),
+              amount: total_price,
+              location_id: LOCATION_ID,
+              name: `${customer.first_name || ""} ${customer.last_name || ""}`.trim(),
+              email: customer.email || "",
+              phone: customer.phone || "",
+              orderNumber: order_number,
+              orderName: name,
+              billingAddress: address,
+              sku: topOrder.sku,
+            });
+
+            await assignmentRepo.save(assignment);
+
+            let notificationMessage = `Order #${order_number} (${name}) has been successfully assigned to you.`;
+
+            io.emit('orderAssigned', { message: notificationMessage, userId: user.id });
+
+            const notification = notificationRepository.create({
+              user: { id: user.id },
+              message: notificationMessage,
+            });
+            await notificationRepository.save(notification);
+
+            console.log(`Inserted orderId: ${id}`);
           }
-
-          const existingAssignment = await assignmentRepo.findOneBy({ orderId: id });
-
-          if (existingAssignment) {
-            console.log(`Skipped existing orderId: ${id}`);
-            continue;
-          }
-
-          const assignment = assignmentRepo.create({
-            orderId: id,
-            status: AssignmentStatus.PENDING,
-            user: topOrder.customerId.toString(),
-            amount: total_price,
-            location_id: LOCATION_ID,
-            name: `${customer.first_name || ""} ${customer.last_name || ""}`.trim(),
-            email: customer.email || "",
-            phone: customer.phone || "",
-            orderNumber: order_number,
-            orderName: name,
-            billingAddress: address,
-          });
-
-          await assignmentRepo.save(assignment);
-
-          let notificationMessage = `Order #${order_number} (${name}) has been successfully assigned to you.`;
-
-          io.emit('orderAssigned', { message: notificationMessage, userId: user.id });
-
-          const notification = notificationRepository.create({
-            user: { id: user.id },
-            message: notificationMessage,
-          });
-          await notificationRepository.save(notification);
-
-          console.log(`Inserted orderId: ${id}`);
         }
       }
 
       console.log("Order assignment job completed.");
+      return
     } catch (error) {
       console.error("Error assigning order to User:", error);
     }

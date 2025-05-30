@@ -38,6 +38,9 @@ export class User {
   @Column({ default: "" })  // Rag. Sociale -> VAT
   companyName: string;
 
+  @Column({ default: "" })  // VAT
+  vat: string;
+
   @Column({ default: "" })  // Via
   street: string;
 
